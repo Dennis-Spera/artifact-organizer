@@ -163,12 +163,6 @@ def save_upload_to_images(file_name: str, content: bytes) -> str:
     return target_path.relative_to(APP_DIR).as_posix()
 
 
-def trigger_image_picker() -> None:
-    ui.run_javascript(
-        f"document.getElementById('{image_upload.html_id}')?.querySelector('input[type=file]')?.click()"
-    )
-
-
 def safe_notify(message: str, color: str = 'primary') -> None:
     try:
         ui.notify(message, color=color)
@@ -478,10 +472,10 @@ with ui.column().classes('w-full q-pa-md'):
             with ui.column().classes('col-12 col-md-3 items-center'):
                 ui.label('Preview image').classes('text-subtitle2 q-mb-xs')
                 with ui.element('div').style(
-                    'width: 150px; height: 150px; position: relative; cursor: pointer; overflow: hidden; border-radius: 12px; border: 2px dashed #cbd5e1;'
-                ).on('click', lambda: trigger_image_picker()):
+                    'width: 150px; height: 150px; position: relative; overflow: hidden; border-radius: 12px; border: 2px dashed #cbd5e1;'
+                ):
                     link_image = ui.image(current_image_source).style('width: 150px; height: 150px; object-fit: cover;')
-                    ui.label('Click to change').style(
+                    ui.label('Preview').style(
                         'position: absolute; inset: auto 0 0 0; text-align: center; background: rgba(15, 23, 42, 0.55); color: white; font-size: 12px; padding: 4px 0;'
                     )
 
@@ -489,9 +483,7 @@ with ui.column().classes('w-full q-pa-md'):
                     on_upload=handle_image_upload,
                     auto_upload=True,
                     max_files=1,
-                ).props('accept=.png,.jpg,.jpeg,.gif,.webp,.svg').style(
-                    'position:absolute;left:-9999px;top:auto;width:1px;height:1px;opacity:0;pointer-events:none;'
-                )
+                ).props('accept=.png,.jpg,.jpeg,.gif,.webp,.svg,.heic,.heif label=Choose image').classes('w-full q-mt-sm')
 
     link_container = ui.column().classes('w-full')
 
