@@ -1,0 +1,16 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+data.json
+activate.fish
+main.py
+prompts.md
+publish_to_github.sh
+uv.lock
