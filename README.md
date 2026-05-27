@@ -37,15 +37,13 @@ cd artifact-organizer
 
 ### Prerequisites
 
-- Python 3.12 or newer
+- uv
 - Git (optional, only needed if you clone the repository)
 
-### Option 1: Virtual Environment + pip (recommended)
-
-1. Create a virtual environment:
+1. Create a virtual environment with uv:
 
 ```bash
-python3 -m venv .venv
+uv venv .venv
 ```
 
 2. Activate it:
@@ -62,15 +60,7 @@ bash/zsh:
 source .venv/bin/activate
 ```
 
-3. Install the app dependencies from project metadata:
-
-```bash
-pip install .
-```
-
-### Option 2: uv
-
-If you use uv, install dependencies with:
+3. Install dependencies with uv:
 
 ```bash
 uv sync
@@ -81,7 +71,7 @@ uv sync
 Start the server:
 
 ```bash
-python app.py
+uv run python app.py
 ```
 
 Then open the URL shown in terminal (usually http://localhost:8080).
