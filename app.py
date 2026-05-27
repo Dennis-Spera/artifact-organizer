@@ -6,7 +6,7 @@ from uuid import uuid4
 from time import time
 from typing import Any, Dict, List, Optional
 
-from nicegui import ui
+from nicegui import app, ui
 from tinydb import Query, TinyDB
 
 DB_FILE = 'data.json'
@@ -30,7 +30,7 @@ links_table = db.table('links')
 categories_table = db.table('categories')
 
 IMAGES_DIR.mkdir(exist_ok=True)
-ui.add_static_files('/images', str(IMAGES_DIR))
+app.add_static_files('/images', str(IMAGES_DIR))
 
 
 class LinkStore:
