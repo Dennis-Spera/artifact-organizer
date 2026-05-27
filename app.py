@@ -169,12 +169,20 @@ def trigger_image_picker() -> None:
     )
 
 
+def safe_notify(message: str, color: str = 'primary') -> None:
+    try:
+        ui.notify(message, color=color)
+    except RuntimeError:
+        # This can happen if the callback outlives a destroyed slot/context.
+        print(f'notify[{color}]: {message}')
+
+
 async def handle_image_upload(event: Any) -> None:
     global current_image_source
     file_bytes = await event.file.read()
     current_image_source = save_upload_to_images(event.file.name, file_bytes)
     link_image.set_source(current_image_source)
-    ui.notify(f'Image selected: {event.file.name}', color='positive')
+    safe_notify(f'Image selected: {event.file.name}', color='positive')
 
 
 def update_entry_mode() -> None:
@@ -229,15 +237,15 @@ def render_categories() -> None:
             def submit_add_category() -> None:
                 value = (category_input.value or '').strip()
                 if not value:
-                    ui.notify('Category name is required', color='warning')
+                    safe_notify('Category name is required', color='warning')
                     return
                 try:
                     new_name = store.add_category(value)
                     category_input.value = ''
                     set_selected_category(new_name)
-                    ui.notify(f'Category "{new_name}" added', color='positive')
+                    safe_notify(f'Category "{new_name}" added', color='positive')
                 except ValueError as exc:
-                    ui.notify(str(exc), color='negative')
+                    safe_notify(str(exc), color='negative')
 
             ui.button('Add', on_click=submit_add_category).props('dense').classes('w-20')
 
@@ -270,9 +278,9 @@ def delete_category(name: str) -> None:
         update_form_visibility()
         render_categories()
         render_links()
-        ui.notify(f'Category "{name}" deleted. Links moved to "{DEFAULT_CATEGORY}".', color='positive')
+        safe_notify(f'Category "{name}" deleted. Links moved to "{DEFAULT_CATEGORY}".', color='positive')
     except ValueError as exc:
-        ui.notify(str(exc), color='negative')
+        safe_notify(str(exc), color='negative')
 
 
 def open_rename_category_dialog(old_name: str) -> None:
@@ -289,12 +297,12 @@ def open_rename_category_dialog(old_name: str) -> None:
                     updated = store.rename_category(old_name, (new_name_input.value or '').strip())
                     if selected_category == old_name:
                         selected_category = updated
+                    safe_notify('Category updated', color='positive')
                     dialog.close()
                     render_categories()
                     render_links()
-                    ui.notify('Category updated', color='positive')
                 except ValueError as exc:
-                    ui.notify(str(exc), color='negative')
+                    safe_notify(str(exc), color='negative')
 
             ui.button('Save', on_click=submit_rename, color='primary')
 
@@ -329,7 +337,7 @@ def save_link() -> None:
 
     if is_text_only:
         if not text_content:
-            ui.notify('Text is required for text-only entries', color='warning')
+            safe_notify('Text is required for text-only entries', color='warning')
             return
         if not title:
             title = 'Text Note'
@@ -337,7 +345,7 @@ def save_link() -> None:
         description = ''
     else:
         if not title or not url:
-            ui.notify('Title and URL are required', color='warning')
+            safe_notify('Title and URL are required', color='warning')
             return
         text_content = ''
 
@@ -354,7 +362,7 @@ def save_link() -> None:
             entry_type='text' if is_text_only else 'link',
             text_content=text_content,
         )
-        ui.notify('Link added', color='positive')
+        safe_notify('Link added', color='positive')
     else:
         store.update_link(
             doc_id=editing_doc_id,
@@ -366,7 +374,7 @@ def save_link() -> None:
             entry_type='text' if is_text_only else 'link',
             text_content=text_content,
         )
-        ui.notify('Link updated', color='positive')
+        safe_notify('Link updated', color='positive')
 
     reset_form()
     render_categories()
@@ -377,7 +385,7 @@ def edit_link(doc_id: int) -> None:
     global editing_doc_id, current_image_source, form_visible
     record = links_table.get(doc_id=doc_id)
     if not record:
-        ui.notify('Link not found', color='negative')
+        safe_notify('Link not found', color='negative')
         return
 
     editing_doc_id = doc_id
@@ -400,7 +408,7 @@ def edit_link(doc_id: int) -> None:
 
 def remove_link(doc_id: int) -> None:
     store.delete_link(doc_id)
-    ui.notify('Link deleted', color='positive')
+    safe_notify('Link deleted', color='positive')
     if editing_doc_id == doc_id:
         reset_form()
     render_links()
@@ -481,7 +489,9 @@ with ui.column().classes('w-full q-pa-md'):
                     on_upload=handle_image_upload,
                     auto_upload=True,
                     max_files=1,
-                ).props('accept=.png,.jpg,.jpeg,.gif,.webp,.svg').classes('hidden')
+                ).props('accept=.png,.jpg,.jpeg,.gif,.webp,.svg').style(
+                    'position:absolute;left:-9999px;top:auto;width:1px;height:1px;opacity:0;pointer-events:none;'
+                )
 
     link_container = ui.column().classes('w-full')
 
