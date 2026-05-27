@@ -30,6 +30,7 @@ links_table = db.table('links')
 categories_table = db.table('categories')
 
 IMAGES_DIR.mkdir(exist_ok=True)
+ui.add_static_files('/images', str(IMAGES_DIR))
 
 
 class LinkStore:
@@ -501,7 +502,7 @@ with ui.column().classes('w-full q-pa-md'):
                 with ui.element('div').style(
                     'width: 150px; height: 150px; position: relative; overflow: hidden; border-radius: 12px; border: 2px dashed #cbd5e1;'
                 ):
-                    link_image = ui.image(current_image_source).style('width: 150px; height: 150px; object-fit: cover;')
+                    link_image = ui.image(preview_image_source(current_image_source)).style('width: 150px; height: 150px; object-fit: cover;')
                     ui.label('Preview').style(
                         'position: absolute; inset: auto 0 0 0; text-align: center; background: rgba(15, 23, 42, 0.55); color: white; font-size: 12px; padding: 4px 0;'
                     )
