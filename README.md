@@ -24,44 +24,67 @@ It supports:
 - images/: Uploaded image files for entries
 - activate.fish: Fish shell helper to activate local virtual environment
 
-## Quick Start
+## Download
 
-### Option 1: Standard venv + pip
+Clone the repository and move into the project folder:
 
-1. Create virtual environment:
+```bash
+git clone https://github.com/Dennis-Spera/artifact-organizer.git
+cd artifact-organizer
+```
+
+## Installation
+
+### Prerequisites
+
+- Python 3.12 or newer
+- Git (optional, only needed if you clone the repository)
+
+### Option 1: Virtual Environment + pip (recommended)
+
+1. Create a virtual environment:
 
 ```bash
 python3 -m venv .venv
 ```
 
-2. Activate it (fish):
+2. Activate it:
+
+fish:
 
 ```bash
 source activate.fish
 ```
 
-3. Install dependencies:
+bash/zsh:
 
 ```bash
-pip install nicegui tinydb
+source .venv/bin/activate
 ```
 
-4. Run the app:
+3. Install the app dependencies from project metadata:
+
+```bash
+pip install .
+```
+
+### Option 2: uv
+
+If you use uv, install dependencies with:
+
+```bash
+uv sync
+```
+
+## Run The App
+
+Start the server:
 
 ```bash
 python app.py
 ```
 
-Open the URL printed in terminal (usually http://localhost:8080).
-
-### Option 2: UV workflow
-
-If you use uv:
-
-```bash
-uv sync
-uv run python app.py
-```
+Then open the URL shown in terminal (usually http://localhost:8080).
 
 ## How To Use
 
