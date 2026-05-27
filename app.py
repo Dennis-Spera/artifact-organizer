@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from datetime import datetime, timezone
 from uuid import uuid4
+from time import time
 from typing import Any, Dict, List, Optional
 
 from nicegui import ui
@@ -165,7 +166,22 @@ def save_upload_to_images(file_name: str, content: bytes) -> str:
     unique_name = f'{safe_stem}_{uuid4().hex[:12]}{suffix}'
     target_path = IMAGES_DIR / unique_name
     target_path.write_bytes(content)
-    return target_path.relative_to(APP_DIR).as_posix()
+    return f'/{target_path.relative_to(APP_DIR).as_posix()}'
+
+
+def normalize_image_source(source: str) -> str:
+    if not source:
+        return DEFAULT_IMAGE_SOURCE
+    if source.startswith(('data:', 'http://', 'https://', '/')):
+        return source
+    return f'/{source}'
+
+
+def preview_image_source(source: str) -> str:
+    normalized = normalize_image_source(source)
+    if normalized.startswith(('data:', 'http://', 'https://')):
+        return normalized
+    return f'{normalized}?v={int(time() * 1000)}'
 
 
 def safe_notify(message: str, color: str = 'primary') -> None:
@@ -181,7 +197,7 @@ async def handle_image_upload(event: Any) -> None:
     try:
         file_bytes = await event.file.read()
         current_image_source = save_upload_to_images(event.file.name, file_bytes)
-        link_image.set_source(current_image_source)
+        link_image.set_source(preview_image_source(current_image_source))
         upload_status_label.text = f'Selected: {event.file.name}'
         safe_notify(f'Image selected: {event.file.name}', color='positive')
     except Exception as exc:
@@ -325,7 +341,7 @@ def reset_form() -> None:
     categories = ['All'] + store.get_categories()
     category_select.options = categories
     category_select.value = selected_category if selected_category != 'All' else DEFAULT_CATEGORY
-    link_image.set_source(current_image_source)
+    link_image.set_source(preview_image_source(current_image_source))
     upload_status_label.text = 'No image selected'
     update_entry_mode()
 
@@ -401,7 +417,7 @@ def edit_link(doc_id: int) -> None:
     text_content_input.value = record.get('text_content', '')
     text_only_toggle.value = is_text_only
     current_image_source = record.get('image_source', DEFAULT_IMAGE_SOURCE)
-    link_image.set_source(current_image_source)
+    link_image.set_source(preview_image_source(current_image_source))
 
     categories = ['All'] + store.get_categories()
     category_select.options = categories
@@ -433,7 +449,7 @@ def render_links() -> None:
         for row in rows:
             with ui.card().classes('w-full q-mb-sm'):
                 with ui.row().classes('w-full items-start q-gutter-md no-wrap'):
-                    ui.image(row.get('image_source', DEFAULT_IMAGE_SOURCE)).classes('w-24 h-24 rounded-lg object-cover')
+                    ui.image(normalize_image_source(row.get('image_source', DEFAULT_IMAGE_SOURCE))).classes('w-24 h-24 rounded-lg object-cover')
                     with ui.column().classes('col'):
                         ui.markdown(row.get('title', 'Untitled')).classes('text-subtitle1')
                         entry_type = row.get('entry_type', 'link')
