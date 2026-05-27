@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from datetime import datetime, timezone
+from uuid import uuid4
 from typing import Any, Dict, List, Optional
 
 from nicegui import ui
@@ -157,9 +158,13 @@ form_visible = False
 
 
 def save_upload_to_images(file_name: str, content: bytes) -> str:
-    target_path = IMAGES_DIR / Path(file_name).name
-    if not target_path.exists():
-        target_path.write_bytes(content)
+    original_name = Path(file_name).name
+    suffix = Path(original_name).suffix.lower()
+    stem = Path(original_name).stem[:80]
+    safe_stem = ''.join(ch if ch.isalnum() or ch in {'-', '_'} else '_' for ch in stem).strip('_') or 'upload'
+    unique_name = f'{safe_stem}_{uuid4().hex[:12]}{suffix}'
+    target_path = IMAGES_DIR / unique_name
+    target_path.write_bytes(content)
     return target_path.relative_to(APP_DIR).as_posix()
 
 
@@ -173,10 +178,15 @@ def safe_notify(message: str, color: str = 'primary') -> None:
 
 async def handle_image_upload(event: Any) -> None:
     global current_image_source
-    file_bytes = await event.file.read()
-    current_image_source = save_upload_to_images(event.file.name, file_bytes)
-    link_image.set_source(current_image_source)
-    safe_notify(f'Image selected: {event.file.name}', color='positive')
+    try:
+        file_bytes = await event.file.read()
+        current_image_source = save_upload_to_images(event.file.name, file_bytes)
+        link_image.set_source(current_image_source)
+        upload_status_label.text = f'Selected: {event.file.name}'
+        safe_notify(f'Image selected: {event.file.name}', color='positive')
+    except Exception as exc:
+        upload_status_label.text = f'Upload failed: {exc}'
+        safe_notify(f'Upload failed: {exc}', color='negative')
 
 
 def update_entry_mode() -> None:
@@ -316,6 +326,7 @@ def reset_form() -> None:
     category_select.options = categories
     category_select.value = selected_category if selected_category != 'All' else DEFAULT_CATEGORY
     link_image.set_source(current_image_source)
+    upload_status_label.text = 'No image selected'
     update_entry_mode()
 
 
@@ -484,6 +495,7 @@ with ui.column().classes('w-full q-pa-md'):
                     auto_upload=True,
                     max_files=1,
                 ).props('accept=.png,.jpg,.jpeg,.gif,.webp,.svg,.heic,.heif label=Choose image').classes('w-full q-mt-sm')
+                upload_status_label = ui.label('No image selected').classes('text-caption text-grey-7 q-mt-xs')
 
     link_container = ui.column().classes('w-full')
 
