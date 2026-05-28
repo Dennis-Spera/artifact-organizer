@@ -480,7 +480,7 @@ def remove_orphaned_image(source: str, excluding_doc_id: Optional[int] = None) -
 def safe_notify(message: str, color: str = 'primary') -> None:
     try:
         ui.notify(message, color=color)
-    except RuntimeError:
+    except Exception:
         # This can happen if the callback outlives a destroyed slot/context.
         print(f'notify[{color}]: {message}')
 
@@ -634,10 +634,10 @@ def open_rename_category_dialog(old_name: str) -> None:
                     updated = store.rename_category(old_name, (new_name_input.value or '').strip())
                     if selected_category == old_name:
                         selected_category = updated
-                    safe_notify('Category updated', color='positive')
                     dialog.close()
                     render_categories()
                     render_links()
+                    safe_notify('Category updated', color='positive')
                 except ValueError as exc:
                     safe_notify(str(exc), color='negative')
 
