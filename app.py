@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import socket
 from pathlib import Path
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -50,10 +52,9 @@ class LinkStore:
         return name.strip() or DEFAULT_CATEGORY
 
     def get_categories(self) -> List[str]:
-        names = sorted({row.get('name', DEFAULT_CATEGORY).strip() for row in categories_table.all() if row.get('name')})
-        if DEFAULT_CATEGORY not in names:
-            names.insert(0, DEFAULT_CATEGORY)
-        return names
+        names = {row.get('name', DEFAULT_CATEGORY).strip() for row in categories_table.all() if row.get('name')}
+        other_categories = sorted((name for name in names if name != DEFAULT_CATEGORY), key=str.casefold)
+        return [DEFAULT_CATEGORY, *other_categories]
 
     def add_category(self, name: str) -> str:
         clean = self._normalize_category(name)
@@ -159,7 +160,32 @@ current_image_source = DEFAULT_IMAGE_SOURCE
 form_visible = False
 
 
+def choose_port(start_port: int, attempts: int = 20) -> int:
+    for port in range(start_port, start_port + attempts):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as candidate:
+            candidate.settimeout(0.2)
+            if candidate.connect_ex(('127.0.0.1', port)) != 0:
+                return port
+    raise RuntimeError(f'No free port found in range {start_port}-{start_port + attempts - 1}')
+
+
+def find_matching_image(content: bytes) -> Optional[Path]:
+    content_size = len(content)
+    for existing_path in IMAGES_DIR.iterdir():
+        if not existing_path.is_file():
+            continue
+        if existing_path.stat().st_size != content_size:
+            continue
+        if existing_path.read_bytes() == content:
+            return existing_path
+    return None
+
+
 def save_upload_to_images(file_name: str, content: bytes) -> str:
+    existing_path = find_matching_image(content)
+    if existing_path is not None:
+        return f'/{existing_path.relative_to(APP_DIR).as_posix()}'
+
     original_name = Path(file_name).name
     suffix = Path(original_name).suffix.lower()
     stem = Path(original_name).stem[:80]
@@ -173,9 +199,14 @@ def save_upload_to_images(file_name: str, content: bytes) -> str:
 def normalize_image_source(source: str) -> str:
     if not source:
         return DEFAULT_IMAGE_SOURCE
-    if source.startswith(('data:', 'http://', 'https://', '/')):
+    if source.startswith(('data:', 'http://', 'https://')):
         return source
-    return f'/{source}'
+
+    normalized = source if source.startswith('/') else f'/{source}'
+    local_path = APP_DIR / normalized.lstrip('/')
+    if local_path.exists():
+        return normalized
+    return DEFAULT_IMAGE_SOURCE
 
 
 def preview_image_source(source: str) -> str:
@@ -183,6 +214,38 @@ def preview_image_source(source: str) -> str:
     if normalized.startswith(('data:', 'http://', 'https://')):
         return normalized
     return f'{normalized}?v={int(time() * 1000)}'
+
+
+def resolve_managed_image_path(source: str) -> Optional[Path]:
+    normalized = source if source.startswith('/') else f'/{source}'
+    if not normalized.startswith('/images/'):
+        return None
+
+    candidate = (APP_DIR / normalized.lstrip('/')).resolve()
+    images_root = IMAGES_DIR.resolve()
+    if images_root not in candidate.parents:
+        return None
+    return candidate
+
+
+def remove_orphaned_image(source: str, excluding_doc_id: Optional[int] = None) -> None:
+    if not source or source == DEFAULT_IMAGE_SOURCE:
+        return
+    if source.startswith(('http://', 'https://', 'data:')):
+        return
+
+    image_path = resolve_managed_image_path(source)
+    if image_path is None:
+        return
+
+    for row in links_table.all():
+        if excluding_doc_id is not None and row.doc_id == excluding_doc_id:
+            continue
+        if row.get('image_source') == source:
+            return
+
+    if image_path.exists():
+        image_path.unlink()
 
 
 def safe_notify(message: str, color: str = 'primary') -> None:
@@ -197,10 +260,15 @@ async def handle_image_upload(event: Any) -> None:
     global current_image_source
     try:
         file_bytes = await event.file.read()
-        current_image_source = save_upload_to_images(event.file.name, file_bytes)
+        if not file_bytes:
+            raise ValueError('Uploaded file is empty.')
+
+        file_name = event.file.name or 'upload'
+        current_image_source = save_upload_to_images(file_name, file_bytes)
         link_image.set_source(preview_image_source(current_image_source))
-        upload_status_label.text = f'Selected: {event.file.name}'
-        safe_notify(f'Image selected: {event.file.name}', color='positive')
+        link_image.update()
+        upload_status_label.text = f'Selected: {file_name} ({len(file_bytes)} bytes)'
+        safe_notify(f'Image selected: {file_name}', color='positive')
     except Exception as exc:
         upload_status_label.text = f'Upload failed: {exc}'
         safe_notify(f'Upload failed: {exc}', color='negative')
@@ -277,11 +345,20 @@ def render_categories() -> None:
 
         ui.separator().classes('q-mb-sm')
 
-        all_classes = 'w-full justify-start'
         all_color = 'primary' if selected_category == 'All' else 'grey-8'
-        ui.button('All', on_click=lambda: set_selected_category('All'), color=all_color).classes(all_classes)
+        uncategorized_color = 'primary' if selected_category == DEFAULT_CATEGORY else 'grey-8'
+        ui.button('All', on_click=lambda: set_selected_category('All'), color=all_color).classes('w-full justify-start q-mb-xs')
+        ui.button(
+            DEFAULT_CATEGORY,
+            on_click=lambda: set_selected_category(DEFAULT_CATEGORY),
+            color=uncategorized_color,
+        ).classes('w-full justify-start q-mb-sm')
+
+        ui.separator().classes('q-mb-sm')
 
         for name in store.get_categories():
+            if name == DEFAULT_CATEGORY:
+                continue
             color = 'primary' if selected_category == name else 'grey-8'
             with ui.row().classes('w-full items-center q-gutter-xs'):
                 ui.button(name, on_click=lambda n=name: set_selected_category(n), color=color).classes('col')
@@ -386,6 +463,8 @@ def save_link() -> None:
         )
         safe_notify('Link added', color='positive')
     else:
+        previous = links_table.get(doc_id=editing_doc_id)
+        previous_image_source = previous.get('image_source', '') if previous else ''
         store.update_link(
             doc_id=editing_doc_id,
             title=title,
@@ -396,6 +475,8 @@ def save_link() -> None:
             entry_type='text' if is_text_only else 'link',
             text_content=text_content,
         )
+        if previous_image_source and previous_image_source != current_image_source:
+            remove_orphaned_image(previous_image_source, excluding_doc_id=editing_doc_id)
         safe_notify('Link updated', color='positive')
 
     reset_form()
@@ -429,7 +510,11 @@ def edit_link(doc_id: int) -> None:
 
 
 def remove_link(doc_id: int) -> None:
+    record = links_table.get(doc_id=doc_id)
+    image_source = record.get('image_source', '') if record else ''
     store.delete_link(doc_id)
+    if image_source:
+        remove_orphaned_image(image_source)
     safe_notify('Link deleted', color='positive')
     if editing_doc_id == doc_id:
         reset_form()
@@ -521,4 +606,5 @@ update_form_visibility()
 reset_form()
 render_links()
 
-ui.run(title='Artifact Organizer', reload=False, show_welcome_message=False)
+preferred_port = int(os.getenv('PORT', '8081'))
+ui.run(title='Artifact Organizer', reload=False, show_welcome_message=False, port=choose_port(preferred_port))
