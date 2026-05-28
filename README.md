@@ -1,4 +1,4 @@
-ls# Artifact Organizer
+# Artifact Organizer
 
 Artifact Organizer is a local NiceGUI + TinyDB app for collecting and organizing links and text notes by category.
 
