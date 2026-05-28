@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 import socket
+import json
+import tarfile
 from pathlib import Path
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -15,6 +17,7 @@ DB_FILE = 'data.json'
 DEFAULT_CATEGORY = 'Uncategorized'
 APP_DIR = Path(__file__).resolve().parent
 IMAGES_DIR = APP_DIR / 'images'
+BACKUP_SETTINGS_FILE = APP_DIR / 'backup_settings.json'
 DEFAULT_IMAGE_SOURCE = (
     'data:image/svg+xml;utf8,'
     '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300" viewBox="0 0 300 300">'
@@ -158,6 +161,232 @@ selected_category = 'All'
 editing_doc_id: Optional[int] = None
 current_image_source = DEFAULT_IMAGE_SOURCE
 form_visible = False
+
+
+def _now_iso_utc() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec='seconds').replace('+00:00', 'Z')
+
+
+def load_backup_settings() -> Dict[str, str]:
+    defaults = {'backup_dir': '', 'last_backup_at': '', 'restore_dir': ''}
+    if not BACKUP_SETTINGS_FILE.exists():
+        return defaults
+
+    try:
+        payload = json.loads(BACKUP_SETTINGS_FILE.read_text(encoding='utf-8'))
+    except (json.JSONDecodeError, OSError):
+        return defaults
+
+    return {
+        'backup_dir': str(payload.get('backup_dir', '')).strip(),
+        'last_backup_at': str(payload.get('last_backup_at', '')).strip(),
+        'restore_dir': str(payload.get('restore_dir', '')).strip(),
+    }
+
+
+def save_backup_settings() -> None:
+    BACKUP_SETTINGS_FILE.write_text(json.dumps(backup_settings, indent=2), encoding='utf-8')
+
+
+def days_since_last_backup() -> Optional[int]:
+    last_backup_at = backup_settings.get('last_backup_at', '').strip()
+    if not last_backup_at:
+        return None
+
+    try:
+        last_dt = datetime.fromisoformat(last_backup_at.replace('Z', '+00:00'))
+    except ValueError:
+        return None
+
+    return (datetime.now(timezone.utc).date() - last_dt.date()).days
+
+
+def backup_status_text() -> str:
+    days = days_since_last_backup()
+    if days is None:
+        return 'Days since last backup: never'
+    if days == 0:
+        return 'Days since last backup: 0 (today)'
+    if days == 1:
+        return 'Days since last backup: 1 day'
+    return f'Days since last backup: {days} days'
+
+
+def backup_location_text() -> str:
+    configured = backup_settings.get('backup_dir', '').strip()
+    return f'Backup location: {configured or "Not set"}'
+
+
+def restore_location_text() -> str:
+    configured = backup_settings.get('restore_dir', '').strip()
+    return f'Restore location: {configured or "Not set"}'
+
+
+def list_backup_archives() -> List[Path]:
+    configured = backup_settings.get('backup_dir', '').strip()
+    if not configured:
+        return []
+
+    backup_dir = Path(configured).expanduser()
+    if not backup_dir.exists() or not backup_dir.is_dir():
+        return []
+
+    return sorted(
+        [p for p in backup_dir.glob('*.tar.gz') if p.is_file()],
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+
+
+def restore_backup_archive(archive_path: Path, restore_root: Path) -> Path:
+    if not archive_path.exists() or not archive_path.is_file():
+        raise ValueError(f'Backup archive not found: {archive_path}')
+
+    restore_root = restore_root.expanduser().resolve()
+    restore_root.mkdir(parents=True, exist_ok=True)
+
+    with tarfile.open(archive_path, mode='r:gz') as tar:
+        members = tar.getmembers()
+        if not members:
+            raise ValueError('Backup archive is empty.')
+
+        for member in members:
+            target_path = (restore_root / member.name).resolve()
+            if target_path != restore_root and restore_root not in target_path.parents:
+                raise ValueError('Unsafe archive contents detected; restore aborted.')
+
+        tar.extractall(path=restore_root)
+
+    return restore_root
+
+
+def open_restore_dialog() -> None:
+    archives = list_backup_archives()
+    if not archives:
+        safe_notify('No backup archives found in the configured backup location', color='warning')
+        return
+
+    default_restore_dir = backup_settings.get('restore_dir', '').strip() or str(APP_DIR.parent)
+    archive_options = {str(path): path.name for path in archives}
+    default_archive = str(archives[0])
+
+    with ui.dialog() as dialog, ui.card().classes('min-w-[560px]'):
+        ui.label('Restore from backup').classes('text-subtitle1')
+        archive_select = ui.select(
+            archive_options,
+            label='Backup archive',
+            value=default_archive,
+        ).props('outlined')
+        restore_input = ui.input('Restore destination directory', value=default_restore_dir).props('outlined')
+        ui.label('Restore will extract files into the selected destination directory.').classes('text-caption text-grey-7')
+
+        with ui.row().classes('justify-end q-gutter-sm'):
+            ui.button('Cancel', on_click=dialog.close).props('flat')
+
+            def submit_restore() -> None:
+                archive_value = (archive_select.value or '').strip()
+                destination_value = (restore_input.value or '').strip()
+                if not archive_value:
+                    safe_notify('Select a backup archive', color='warning')
+                    return
+                if not destination_value:
+                    safe_notify('Restore destination is required', color='warning')
+                    return
+
+                archive_path = Path(archive_value)
+                restore_destination = Path(destination_value).expanduser()
+                try:
+                    final_restore_path = restore_backup_archive(archive_path, restore_destination)
+                except (OSError, tarfile.TarError, ValueError) as exc:
+                    safe_notify(f'Restore failed: {exc}', color='negative')
+                    return
+
+                backup_settings['restore_dir'] = str(restore_destination)
+                save_backup_settings()
+                dialog.close()
+                safe_notify(f'Restore completed to {final_restore_path}', color='positive')
+                render_categories()
+
+            ui.button('Restore now', on_click=submit_restore, color='primary')
+
+    dialog.open()
+
+
+def run_backup_now() -> None:
+    configured = backup_settings.get('backup_dir', '').strip()
+    if not configured:
+        safe_notify('Set a backup location first', color='warning')
+        return
+
+    backup_dir = Path(configured).expanduser()
+    try:
+        backup_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        safe_notify(f'Cannot create backup directory: {exc}', color='negative')
+        return
+
+    stamp = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
+    archive_path = backup_dir / f'{APP_DIR.name}_{stamp}.tar.gz'
+
+    backup_dir_in_project: Optional[Path] = None
+    try:
+        backup_dir_in_project = backup_dir.resolve().relative_to(APP_DIR.resolve())
+    except ValueError:
+        backup_dir_in_project = None
+
+    try:
+        with tarfile.open(archive_path, mode='w:gz') as tar:
+            for item in APP_DIR.rglob('*'):
+                if not item.is_file():
+                    continue
+                if item.resolve() == archive_path.resolve():
+                    continue
+
+                relative_item = item.relative_to(APP_DIR)
+                if backup_dir_in_project and (
+                    relative_item == backup_dir_in_project
+                    or backup_dir_in_project in relative_item.parents
+                ):
+                    continue
+
+                tar.add(item, arcname=Path(APP_DIR.name) / relative_item)
+    except OSError as exc:
+        safe_notify(f'Backup failed: {exc}', color='negative')
+        return
+
+    backup_settings['last_backup_at'] = _now_iso_utc()
+    save_backup_settings()
+    safe_notify(f'Backup saved: {archive_path}', color='positive')
+    render_categories()
+
+
+def open_backup_location_dialog() -> None:
+    with ui.dialog() as dialog, ui.card().classes('min-w-[480px]'):
+        ui.label('Set backup location').classes('text-subtitle1')
+        location_input = ui.input('Directory path', value=backup_settings.get('backup_dir', '')).props('outlined')
+        ui.label('Example: /mnt/data/Dropbox/backups').classes('text-caption text-grey-7')
+
+        with ui.row().classes('justify-end q-gutter-sm'):
+            ui.button('Cancel', on_click=dialog.close).props('flat')
+
+            def submit_backup_location() -> None:
+                location = (location_input.value or '').strip()
+                if not location:
+                    safe_notify('Backup location is required', color='warning')
+                    return
+
+                backup_settings['backup_dir'] = str(Path(location).expanduser())
+                save_backup_settings()
+                dialog.close()
+                safe_notify('Backup location updated', color='positive')
+                render_categories()
+
+            ui.button('Save', on_click=submit_backup_location, color='primary')
+
+    dialog.open()
+
+
+backup_settings = load_backup_settings()
 
 
 def choose_port(start_port: int, attempts: int = 20) -> int:
@@ -342,6 +571,16 @@ def render_categories() -> None:
 
         ui.label('Add link/text').classes('text-subtitle1 q-mb-xs')
         ui.button('Add', on_click=open_add_form, color='primary').props('dense').classes('w-20 q-mb-sm')
+
+        ui.separator().classes('q-mb-sm')
+
+        ui.label('Backup').classes('text-subtitle1 q-mb-xs')
+        ui.button('Set backup location', on_click=open_backup_location_dialog).props('dense').classes('w-full justify-start q-mb-xs')
+        ui.button('Backup now', on_click=run_backup_now, color='primary').props('dense').classes('w-full justify-start q-mb-xs')
+        ui.button('Restore from backup', on_click=open_restore_dialog).props('dense').classes('w-full justify-start q-mb-xs')
+        ui.label(backup_location_text()).classes('text-caption text-grey-7 q-mb-xs')
+        ui.label(restore_location_text()).classes('text-caption text-grey-7 q-mb-xs')
+        ui.label(backup_status_text()).classes('text-caption text-grey-7 q-mb-sm')
 
         ui.separator().classes('q-mb-sm')
 
