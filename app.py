@@ -36,6 +36,42 @@ categories_table = db.table('categories')
 
 IMAGES_DIR.mkdir(exist_ok=True)
 app.add_static_files('/images', str(IMAGES_DIR))
+ui.add_head_html('''
+<style>
+    .nicegui-codemirror .cm-foldGutter {
+        width: 18px;
+    }
+
+    .nicegui-codemirror .cm-foldGutter span {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 16px;
+        height: 16px;
+        margin-left: 1px;
+        border: 1px solid #94a3b8;
+        border-radius: 3px;
+        background: #f8fafc;
+        color: transparent;
+        font-size: 0;
+        font-weight: 700;
+        line-height: 1;
+    }
+
+    .nicegui-codemirror .cm-foldGutter span::after {
+        color: #334155;
+        font-size: 12px;
+    }
+
+    .nicegui-codemirror .cm-foldGutter span[title="Fold line"]::after {
+        content: "+";
+    }
+
+    .nicegui-codemirror .cm-foldGutter span[title="Unfold line"]::after {
+        content: "-";
+    }
+    </style>
+''')
 
 
 class LinkStore:
@@ -161,6 +197,8 @@ selected_category = 'All'
 editing_doc_id: Optional[int] = None
 current_image_source = DEFAULT_IMAGE_SOURCE
 form_visible = False
+backup_status_label = None
+add_category_input = None
 
 
 def _now_iso_utc() -> str:
@@ -220,6 +258,15 @@ def backup_location_text() -> str:
 def restore_location_text() -> str:
     configured = backup_settings.get('restore_dir', '').strip()
     return f'Restore location: {configured or "Not set"}'
+
+
+def backup_header_text() -> str:
+    return f'{backup_location_text()} | {restore_location_text()} | {backup_status_text()}'
+
+
+def refresh_backup_status_labels() -> None:
+    if backup_status_label is not None:
+        backup_status_label.text = backup_header_text()
 
 
 def list_backup_archives() -> List[Path]:
@@ -303,6 +350,7 @@ def open_restore_dialog() -> None:
 
                 backup_settings['restore_dir'] = str(restore_destination)
                 save_backup_settings()
+                refresh_backup_status_labels()
                 dialog.close()
                 safe_notify(f'Restore completed to {final_restore_path}', color='positive')
                 render_categories()
@@ -356,6 +404,7 @@ def run_backup_now() -> None:
 
     backup_settings['last_backup_at'] = _now_iso_utc()
     save_backup_settings()
+    refresh_backup_status_labels()
     safe_notify(f'Backup saved: {archive_path}', color='positive')
     render_categories()
 
@@ -377,6 +426,7 @@ def open_backup_location_dialog() -> None:
 
                 backup_settings['backup_dir'] = str(Path(location).expanduser())
                 save_backup_settings()
+                refresh_backup_status_labels()
                 dialog.close()
                 safe_notify('Backup location updated', color='positive')
                 render_categories()
@@ -485,14 +535,35 @@ def safe_notify(message: str, color: str = 'primary') -> None:
         print(f'notify[{color}]: {message}')
 
 
+def submit_add_category() -> None:
+    value = (add_category_input.value or '').strip()
+    if not value:
+        safe_notify('Category name is required', color='warning')
+        return
+    try:
+        new_name = store.add_category(value)
+        add_category_input.value = ''
+        set_selected_category(new_name)
+        safe_notify(f'Category "{new_name}" added', color='positive')
+    except ValueError as exc:
+        safe_notify(str(exc), color='negative')
+
+
+def refresh_interface() -> None:
+    refresh_backup_status_labels()
+    render_categories()
+    update_form_visibility()
+    reset_form()
+    render_links()
+    safe_notify('Interface refreshed', color='positive')
+
+
 async def handle_image_upload(event: Any) -> None:
     global current_image_source
     try:
         file_bytes = await event.file.read()
         if not file_bytes:
             raise ValueError('Uploaded file is empty.')
-
-        file_name = event.file.name or 'upload'
         current_image_source = save_upload_to_images(file_name, file_bytes)
         link_image.set_source(preview_image_source(current_image_source))
         link_image.update()
@@ -501,6 +572,15 @@ async def handle_image_upload(event: Any) -> None:
     except Exception as exc:
         upload_status_label.text = f'Upload failed: {exc}'
         safe_notify(f'Upload failed: {exc}', color='negative')
+
+
+def copy_url(url: str) -> None:
+    url = url.strip()
+    if not url:
+        safe_notify('No URL to copy', color='warning')
+        return
+    ui.clipboard.write(url)
+    safe_notify('URL copied', color='positive')
 
 
 def update_entry_mode() -> None:
@@ -515,10 +595,8 @@ def update_entry_mode() -> None:
         save_button.text = 'Save Text Note' if is_text_only else 'Save Link'
     if is_text_only:
         text_content_input.style('width: 67%; min-height: 420px;')
-        text_content_input.props('rows=14')
     else:
         text_content_input.style('width: 100%; min-height: 120px;')
-        text_content_input.props('rows=3')
 
 
 def update_form_visibility() -> None:
@@ -549,41 +627,6 @@ def render_categories() -> None:
     with category_list:
         ui.label('Categories').classes('text-subtitle1 q-mb-sm')
 
-        with ui.row().classes('items-center q-gutter-sm q-mb-sm'):
-            category_input = ui.input('Add category').props('dense outlined')
-
-            def submit_add_category() -> None:
-                value = (category_input.value or '').strip()
-                if not value:
-                    safe_notify('Category name is required', color='warning')
-                    return
-                try:
-                    new_name = store.add_category(value)
-                    category_input.value = ''
-                    set_selected_category(new_name)
-                    safe_notify(f'Category "{new_name}" added', color='positive')
-                except ValueError as exc:
-                    safe_notify(str(exc), color='negative')
-
-            ui.button('Add', on_click=submit_add_category).props('dense').classes('w-20')
-
-        ui.separator().classes('q-mb-sm q-mt-sm')
-
-        ui.label('Add link/text').classes('text-subtitle1 q-mb-xs')
-        ui.button('Add', on_click=open_add_form, color='primary').props('dense').classes('w-20 q-mb-sm')
-
-        ui.separator().classes('q-mb-sm')
-
-        ui.label('Backup').classes('text-subtitle1 q-mb-xs')
-        ui.button('Set backup location', on_click=open_backup_location_dialog).props('dense').classes('w-full justify-start q-mb-xs')
-        ui.button('Backup now', on_click=run_backup_now, color='primary').props('dense').classes('w-full justify-start q-mb-xs')
-        ui.button('Restore from backup', on_click=open_restore_dialog).props('dense').classes('w-full justify-start q-mb-xs')
-        ui.label(backup_location_text()).classes('text-caption text-grey-7 q-mb-xs')
-        ui.label(restore_location_text()).classes('text-caption text-grey-7 q-mb-xs')
-        ui.label(backup_status_text()).classes('text-caption text-grey-7 q-mb-sm')
-
-        ui.separator().classes('q-mb-sm')
-
         all_color = 'primary' if selected_category == 'All' else 'grey-8'
         uncategorized_color = 'primary' if selected_category == DEFAULT_CATEGORY else 'grey-8'
         ui.button('All', on_click=lambda: set_selected_category('All'), color=all_color).classes('w-full justify-start q-mb-xs')
@@ -592,8 +635,6 @@ def render_categories() -> None:
             on_click=lambda: set_selected_category(DEFAULT_CATEGORY),
             color=uncategorized_color,
         ).classes('w-full justify-start q-mb-sm')
-
-        ui.separator().classes('q-mb-sm')
 
         for name in store.get_categories():
             if name == DEFAULT_CATEGORY:
@@ -604,6 +645,13 @@ def render_categories() -> None:
                 if name != DEFAULT_CATEGORY:
                     ui.button(icon='edit', on_click=lambda n=name: open_rename_category_dialog(n)).props('flat round dense')
                     ui.button(icon='delete', on_click=lambda n=name: delete_category(n)).props('flat round dense color=negative')
+
+        ui.separator().classes('q-mb-sm')
+
+        ui.label('Backup').classes('text-subtitle1 q-mb-xs')
+        ui.button('Set backup location', on_click=open_backup_location_dialog).props('dense').classes('w-full justify-start q-mb-xs')
+        ui.button('Backup now', on_click=run_backup_now, color='primary').props('dense').classes('w-full justify-start q-mb-xs')
+        ui.button('Restore from backup', on_click=open_restore_dialog).props('dense').classes('w-full justify-start q-mb-xs')
 
 
 def delete_category(name: str) -> None:
@@ -783,7 +831,9 @@ def render_links() -> None:
                         else:
                             ui.badge('Link').props('color=indigo')
                         if entry_type == 'link':
-                            ui.link(row.get('url', ''), row.get('url', '')).props('target=_blank')
+                            with ui.row().classes('items-center q-gutter-xs no-wrap'):
+                                ui.link(row.get('url', ''), row.get('url', '')).props('target=_blank')
+                                ui.button(icon='content_copy', on_click=lambda url=row.get('url', ''): copy_url(url)).props('flat round dense').classes('q-ml-xs')
                         else:
                             ui.label('Text-only entry').classes('text-grey-7')
                         ui.badge(row.get('category', DEFAULT_CATEGORY)).props('color=primary outline')
@@ -799,8 +849,17 @@ def render_links() -> None:
 ui.colors(primary='#2f7d6d')
 ui.page_title('Artifact Organizer')
 
-with ui.header().classes('items-center justify-between'):
+with ui.header().classes('items-center justify-between q-px-md q-py-sm'):
     ui.label('Artifact Organizer').classes('text-h6')
+    backup_status_label = ui.label(backup_header_text()).classes('text-caption text-grey-2')
+
+with ui.row().classes('w-full items-center q-gutter-sm bg-grey-2 q-px-md q-py-sm'):
+    ui.button('Add Link', on_click=open_add_form, color='primary').props('dense')
+    ui.separator().props('vertical')
+    ui.button('Add Category', on_click=submit_add_category).props('dense')
+    add_category_input = ui.input('Add category').props('dense outlined').classes('w-64')
+    ui.separator().props('vertical')
+    ui.button(icon='refresh', on_click=refresh_interface).props('flat round dense')
 
 with ui.left_drawer(value=True, top_corner=True, bottom_corner=True).classes('bg-grey-2'):
     category_list = ui.column().classes('w-64 q-pa-md')
@@ -816,7 +875,12 @@ with ui.column().classes('w-full q-pa-md'):
                     url_input = ui.input('URL').props('outlined').classes('col-12 col-md-4')
                     category_select = ui.select(['All'] + store.get_categories(), label='Category', value=DEFAULT_CATEGORY).props('outlined').classes('col-12 col-md-4 q-ml-sm')
                 description_input = ui.textarea('Description').props('outlined autogrow').classes('w-full q-ml-sm')
-                text_content_input = ui.textarea('Text content').props('outlined').classes('w-full q-ml-sm')
+                text_content_input = ui.codemirror(
+                    value='',
+                    language='Markdown',
+                    line_wrapping=True,
+                    line_numbers=False,
+                ).classes('w-full q-ml-sm')
                 with ui.row().classes('q-gutter-sm'):
                     save_button = ui.button('Add Link', on_click=save_link, color='primary')
                     ui.button('Clear', on_click=reset_form).props('flat')

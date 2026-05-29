@@ -92,6 +92,29 @@ Then open the URL shown in terminal (usually http://localhost:8080).
 - Uploaded images are stored in images/.
 - If an uploaded filename already exists in images/, it is reused.
 
+## Publish To GitHub
+
+Use the helper script from the project root:
+
+```bash
+./publish_to_github.sh artifact-organizer --owner Dennis-Spera --public
+```
+
+Useful options:
+
+- `--https`: use HTTPS remote URL instead of SSH
+- `--no-commit`: push the current branch without creating a snapshot commit
+- `--commit-message "..."`: customize the auto-commit message
+- `--branch <name>`: choose a branch to push
+
+Examples:
+
+```bash
+./publish_to_github.sh artifact-organizer --owner Dennis-Spera --https --branch main
+./publish_to_github.sh artifact-organizer --owner Dennis-Spera --no-commit --https
+./publish_to_github.sh artifact-organizer --owner Dennis-Spera --commit-message "chore: release"
+```
+
 ## Notes
 
 - Markdown is rendered when entries are displayed.
